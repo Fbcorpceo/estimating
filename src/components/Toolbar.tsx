@@ -16,6 +16,8 @@ export function Toolbar() {
   const activePageId = useStore((s) => s.activePageId);
   const activeConditionId = useStore((s) => s.activeConditionId);
   const project = useStore((s) => s.project);
+  const undo = useStore((s) => s.undo);
+  const undoCount = useStore((s) => s.undoStack.length);
   const cond = project.conditions.find((c) => c.id === activeConditionId);
   const page = project.pages.find((p) => p.id === activePageId);
 
@@ -59,6 +61,15 @@ export function Toolbar() {
           {page && page.scale && cond && `Active: ${cond.name} (${cond.type})`}
           {page && page.scale && !cond && 'Select or create a condition on the right.'}
         </div>
+        <div className="flex-1" />
+        <button
+          className="px-3 py-1 rounded text-sm border border-transparent bg-[#2a3142] hover:bg-[#343c52] text-ink disabled:opacity-40 disabled:cursor-not-allowed"
+          onClick={() => undo()}
+          disabled={undoCount === 0}
+          title="Undo last measurement (Ctrl/Cmd+Z)"
+        >
+          Undo
+        </button>
       </div>
       {page && page.scale && (
         <div className="px-3 py-1 text-xs text-muted border-t border-[#222837] bg-[#1a1f2b]">

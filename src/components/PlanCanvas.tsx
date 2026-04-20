@@ -36,6 +36,7 @@ export function PlanCanvas() {
   const rectDraft = useStore((s) => s.rectDraft);
   const setRectDraft = useStore((s) => s.setRectDraft);
   const commitRect = useStore((s) => s.commitRect);
+  const undo = useStore((s) => s.undo);
 
   const page = useMemo(
     () => project.pages.find((p) => p.id === activePageId) ?? null,
@@ -120,12 +121,18 @@ export function PlanCanvas() {
         (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)
       )
         return;
+      if ((e.ctrlKey || e.metaKey) && (e.key === 'z' || e.key === 'Z')) {
+        e.preventDefault();
+        undo();
+        return;
+      }
       if (e.code === 'Space') {
         if (!e.repeat) setSpaceDown(true);
       } else if (e.key === 'Escape') {
         clearDraft();
         clearCalib();
         setShowCalibDialog(false);
+        selectMeasurement(null);
       } else if (e.key === 'Enter') {
         if (tool === 'linear' || tool === 'area') commitDraft();
       } else if (e.key === 'Backspace') {
@@ -156,7 +163,9 @@ export function PlanCanvas() {
     commitDraft,
     popDraftPoint,
     removeMeasurement,
+    selectMeasurement,
     setTool,
+    undo,
   ]);
 
   function screenToImage(p: { x: number; y: number }): Point {
@@ -207,6 +216,18 @@ export function PlanCanvas() {
       return;
     }
     if (e.evt.button !== 0) return;
+    // If the click landed on an existing measurement's node, select it
+    // instead of adding a draft point. Each measurement Group is tagged
+    // with name="m:<id>".
+    let node: Konva.Node | null = e.target;
+    while (node && node !== stage) {
+      const nm = node.name?.();
+      if (nm && nm.startsWith('m:')) {
+        selectMeasurement(nm.slice(2));
+        return;
+      }
+      node = node.getParent();
+    }
     const ip = screenToImage(pointer);
     if (tool === 'calibrate') {
       if (!calibDraft.p1) setCalibPoint('p1', ip);
@@ -217,6 +238,9 @@ export function PlanCanvas() {
       setRectDraft({ start: ip, end: ip });
     } else if (tool === 'count') {
       addCountMarker(ip);
+    } else if (tool === 'pan') {
+      // Clicking on empty space in pan mode deselects
+      selectMeasurement(null);
     }
   }
 
@@ -359,6 +383,14 @@ export function PlanCanvas() {
         </div>
       )}
 
+      {selectedMeasurementId && (
+        <SelectionToolbar
+          measurementId={selectedMeasurementId}
+          onDelete={() => removeMeasurement(selectedMeasurementId)}
+          onDeselect={() => selectMeasurement(null)}
+        />
+      )}
+
       {showCalibDialog && (
         <CalibrateDialog
           onClose={() => {
@@ -406,7 +438,7 @@ function MeasurementsLayer(props: {
         const stroke = cond.color;
         if (cond.type === 'count') {
           return (
-            <Group key={m.id}>
+            <Group key={m.id} name={`m:${m.id}`}>
               {pts.map((p, i) => (
                 <Group key={i}>
                   <Circle
@@ -436,13 +468,14 @@ function MeasurementsLayer(props: {
           const lengthFt = ppf > 0 ? polylineLengthPx(m.points) / ppf : 0;
           const mid = pts[Math.floor(pts.length / 2)] ?? pts[0];
           return (
-            <Group key={m.id} onClick={() => onSelect(m.id)}>
+            <Group key={m.id} name={`m:${m.id}`} onClick={() => onSelect(m.id)}>
               <Line
                 points={flat}
                 stroke={stroke}
                 strokeWidth={isSelected ? 4 : 2}
                 lineJoin="round"
                 lineCap="round"
+                hitStrokeWidth={12}
               />
               {pts.map((p, i) => (
                 <Circle key={i} x={p.x} y={p.y} radius={3} fill={stroke} />
@@ -459,7 +492,7 @@ function MeasurementsLayer(props: {
         const cx = pts.reduce((a, p) => a + p.x, 0) / Math.max(1, pts.length);
         const cy = pts.reduce((a, p) => a + p.y, 0) / Math.max(1, pts.length);
         return (
-          <Group key={m.id} onClick={() => onSelect(m.id)}>
+          <Group key={m.id} name={`m:${m.id}`} onClick={() => onSelect(m.id)}>
             <Line
               points={flat}
               closed
@@ -467,6 +500,7 @@ function MeasurementsLayer(props: {
               stroke={stroke}
               strokeWidth={isSelected ? 4 : 2}
               lineJoin="round"
+              hitStrokeWidth={12}
             />
             {pts.map((p, i) => (
               <Circle key={i} x={p.x} y={p.y} radius={3} fill={stroke} />
@@ -560,6 +594,56 @@ function CalibrationOverlay(props: {
       {a && <Circle x={a.x} y={a.y} radius={5} fill="#ffd166" />}
       {b && calibDraft.p2 && <Circle x={b.x} y={b.y} radius={5} fill="#ffd166" />}
     </Group>
+  );
+}
+
+function SelectionToolbar(props: {
+  measurementId: string;
+  onDelete: () => void;
+  onDeselect: () => void;
+}) {
+  const { measurementId, onDelete, onDeselect } = props;
+  const project = useStore((s) => s.project);
+  const m = project.measurements.find((mm) => mm.id === measurementId);
+  const cond = m ? project.conditions.find((c) => c.id === m.conditionId) : null;
+  const page = m ? project.pages.find((p) => p.id === m.pageId) : null;
+  if (!m || !cond) return null;
+  const ppf = page?.scale ? pixelsPerFoot(page.scale) : 0;
+  let quantity = 0;
+  let unit = cond.unit;
+  if (cond.type === 'linear' && ppf > 0) {
+    quantity = polylineLengthPx(m.points) / ppf;
+  } else if (cond.type === 'area' && ppf > 0) {
+    const sf = polygonAreaPx(m.points) / (ppf * ppf);
+    quantity = cond.unit === 'sy' ? sf / 9 : sf;
+  } else if (cond.type === 'count') {
+    quantity = m.points.length;
+  }
+  return (
+    <div className="absolute bottom-14 left-1/2 -translate-x-1/2 flex items-center gap-2 bg-[#1a1f2b] border border-[#2a3142] rounded-md px-3 py-2 shadow-lg text-sm">
+      <span
+        className="inline-block h-2 w-2 rounded-full"
+        style={{ background: cond.color }}
+      />
+      <span className="text-ink font-medium">{cond.name}</span>
+      <span className="text-muted">
+        {formatNumber(quantity, 2)} {unit}
+      </span>
+      <button
+        className="ml-2 px-2 py-1 rounded bg-rose-600 hover:bg-rose-500 text-white text-xs"
+        onClick={onDelete}
+        title="Delete measurement (Del)"
+      >
+        Delete
+      </button>
+      <button
+        className="px-2 py-1 rounded bg-[#2a3142] hover:bg-[#343c52] text-ink text-xs"
+        onClick={onDeselect}
+        title="Deselect (Esc)"
+      >
+        Deselect
+      </button>
+    </div>
   );
 }
 
