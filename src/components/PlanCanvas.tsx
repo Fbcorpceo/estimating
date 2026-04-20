@@ -33,6 +33,9 @@ export function PlanCanvas() {
   const setTool = useStore((s) => s.setTool);
   const selectMeasurement = useStore((s) => s.selectMeasurement);
   const removeMeasurement = useStore((s) => s.removeMeasurement);
+  const rectDraft = useStore((s) => s.rectDraft);
+  const setRectDraft = useStore((s) => s.setRectDraft);
+  const commitRect = useStore((s) => s.commitRect);
 
   const page = useMemo(
     () => project.pages.find((p) => p.id === activePageId) ?? null,
@@ -133,6 +136,7 @@ export function PlanCanvas() {
       else if (e.key === 'c' || e.key === 'C') setTool('calibrate');
       else if (e.key === 'l' || e.key === 'L') setTool('linear');
       else if (e.key === 'a' || e.key === 'A') setTool('area');
+      else if (e.key === 'r' || e.key === 'R') setTool('rect');
       else if (e.key === 'n' || e.key === 'N') setTool('count');
     };
     const onKeyUp = (e: KeyboardEvent) => {
@@ -209,6 +213,8 @@ export function PlanCanvas() {
       else setCalibPoint('p2', ip);
     } else if (tool === 'linear' || tool === 'area') {
       pushDraftPoint(ip);
+    } else if (tool === 'rect') {
+      setRectDraft({ start: ip, end: ip });
     } else if (tool === 'count') {
       addCountMarker(ip);
     }
@@ -229,13 +235,20 @@ export function PlanCanvas() {
       }));
       return;
     }
-    setHover(screenToImage(pointer));
+    const ip = screenToImage(pointer);
+    setHover(ip);
+    if (tool === 'rect' && rectDraft.start) {
+      setRectDraft({ start: rectDraft.start, end: ip });
+    }
     // ignore unused param warning
     void e;
   }
 
   function handleMouseUp() {
     panState.current.active = false;
+    if (tool === 'rect' && rectDraft.start && rectDraft.end) {
+      commitRect();
+    }
   }
 
   function handleDoubleClick() {
@@ -310,6 +323,16 @@ export function PlanCanvas() {
               calibDraft={calibDraft}
               viewport={viewport}
               hover={tool === 'calibrate' ? hover : null}
+              tool={tool}
+            />
+            <RectDraftOverlay
+              rectDraft={rectDraft}
+              viewport={viewport}
+              ppf={ppf}
+              color={
+                project.conditions.find((c) => c.id === activeConditionId)?.color ?? '#ffffff'
+              }
+              unit={project.conditions.find((c) => c.id === activeConditionId)?.unit ?? 'sf'}
               tool={tool}
             />
           </Layer>
@@ -536,6 +559,42 @@ function CalibrationOverlay(props: {
       )}
       {a && <Circle x={a.x} y={a.y} radius={5} fill="#ffd166" />}
       {b && calibDraft.p2 && <Circle x={b.x} y={b.y} radius={5} fill="#ffd166" />}
+    </Group>
+  );
+}
+
+function RectDraftOverlay(props: {
+  rectDraft: { start?: Point; end?: Point };
+  viewport: Viewport;
+  ppf: number;
+  color: string;
+  unit: string;
+  tool: string;
+}) {
+  const { rectDraft, viewport, ppf, color, unit, tool } = props;
+  if (tool !== 'rect' || !rectDraft.start || !rectDraft.end) return null;
+  const { start, end } = rectDraft;
+  const x1 = Math.min(start.x, end.x);
+  const y1 = Math.min(start.y, end.y);
+  const x2 = Math.max(start.x, end.x);
+  const y2 = Math.max(start.y, end.y);
+  const sx = x1 * viewport.scale + viewport.tx;
+  const sy = y1 * viewport.scale + viewport.ty;
+  const sw = (x2 - x1) * viewport.scale;
+  const sh = (y2 - y1) * viewport.scale;
+  const areaPx2 = (x2 - x1) * (y2 - y1);
+  const areaSf = ppf > 0 ? areaPx2 / (ppf * ppf) : 0;
+  const display = unit === 'sy' ? areaSf / 9 : areaSf;
+  return (
+    <Group listening={false}>
+      <Rect x={sx} y={sy} width={sw} height={sh} fill={color + '22'} stroke={color} strokeWidth={2} dash={[6, 4]} />
+      {ppf > 0 && (
+        <LabelBadge
+          x={sx + sw / 2}
+          y={sy + sh / 2}
+          text={`${formatNumber(display, 2)} ${unit}`}
+        />
+      )}
     </Group>
   );
 }

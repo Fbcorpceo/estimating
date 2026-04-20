@@ -3,6 +3,7 @@ export type ToolMode =
   | 'calibrate'
   | 'linear'
   | 'area'
+  | 'rect'
   | 'count';
 
 export type MeasurementType = 'linear' | 'area' | 'count';
