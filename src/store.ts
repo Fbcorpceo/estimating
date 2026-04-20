@@ -79,6 +79,8 @@ interface State {
   removePage: (pageId: string) => void;
   setActivePage: (pageId: string | null) => void;
   renamePage: (pageId: string, name: string) => void;
+  replacePagePdf: (pageId: string, data: ArrayBuffer, pageIndex: number, width: number, height: number, fileName: string) => void;
+  replacePageImage: (pageId: string, dataUrl: string, width: number, height: number) => void;
 
   setTool: (t: ToolMode) => void;
   setActiveCondition: (id: string | null) => void;
@@ -114,7 +116,7 @@ function scheduleSave(get: () => State) {
   saveTimer = setTimeout(async () => {
     const p = get().project;
     p.updatedAt = Date.now();
-    await db.projects.put(JSON.parse(JSON.stringify(p)));
+    await db.projects.put(structuredClone(p));
     get().refreshRecent();
   }, 250);
 }
@@ -312,6 +314,41 @@ export const useStore = create<State>((set, get) => ({
       project: {
         ...s.project,
         pages: s.project.pages.map((p) => (p.id === pageId ? { ...p, name } : p)),
+      },
+    }));
+    scheduleSave(get);
+  },
+
+  replacePagePdf: (pageId, data, pageIndex, width, height, fileName) => {
+    const fileId = uuid();
+    set((s) => {
+      const pages = s.project.pages.map((p) =>
+        p.id === pageId
+          ? {
+              ...p,
+              source: { kind: 'pdf' as const, fileId, pageIndex, width, height },
+            }
+          : p
+      );
+      const usedFileIds = new Set(
+        pages.filter((p) => p.source.kind === 'pdf').map((p) => (p.source as any).fileId)
+      );
+      const pdfFiles = s.project.pdfFiles.filter((f) => usedFileIds.has(f.id));
+      pdfFiles.push({ id: fileId, name: fileName, data });
+      return { project: { ...s.project, pages, pdfFiles } };
+    });
+    scheduleSave(get);
+  },
+
+  replacePageImage: (pageId, dataUrl, width, height) => {
+    set((s) => ({
+      project: {
+        ...s.project,
+        pages: s.project.pages.map((p) =>
+          p.id === pageId
+            ? { ...p, source: { kind: 'image' as const, dataUrl, width, height } }
+            : p
+        ),
       },
     }));
     scheduleSave(get);

@@ -51,6 +51,7 @@ export function PlanCanvas() {
   const [hover, setHover] = useState<Point | null>(null);
   const [showCalibDialog, setShowCalibDialog] = useState(false);
   const [spaceDown, setSpaceDown] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   // resize observer
   useEffect(() => {
@@ -68,22 +69,34 @@ export function PlanCanvas() {
   useEffect(() => {
     let cancelled = false;
     setPlanImage(null);
+    setLoadError(null);
     if (!page) return;
     if (page.source.kind === 'image') {
       const img = new Image();
       img.onload = () => {
         if (!cancelled) setPlanImage(img);
       };
+      img.onerror = () => {
+        if (!cancelled) setLoadError('The image could not be loaded. Please re-upload the plan.');
+      };
       img.src = page.source.dataUrl;
     } else {
       const file = project.pdfFiles.find((f) => f.id === (page.source as any).fileId);
-      if (!file) return;
-      // Render at 2x for crisp display when zoomed in.
+      if (!file || !file.data || (file.data as ArrayBuffer).byteLength === 0) {
+        setLoadError(
+          'PDF data is missing for this page (likely from an older save). Please re-upload the PDF — your measurements will be kept.'
+        );
+        return;
+      }
       renderPdfPage(file.data, page.source.pageIndex, 2)
         .then((c) => {
           if (!cancelled) setPlanImage(c);
         })
-        .catch((e) => console.error('PDF render failed', e));
+        .catch((e) => {
+          console.error('PDF render failed', e);
+          if (!cancelled)
+            setLoadError('The PDF failed to render. Try re-uploading the file.');
+        });
     }
     return () => {
       cancelled = true;
@@ -377,11 +390,13 @@ export function PlanCanvas() {
         {!page?.scale && page && <> · <span className="text-amber-400">Not calibrated</span></>}
       </div>
 
-      {page && !page.scale && (
+      {page && !page.scale && !loadError && (
         <div className="absolute top-3 left-1/2 -translate-x-1/2 px-4 py-2 rounded-md bg-amber-500/95 text-black text-sm font-medium shadow-lg pointer-events-none">
           Set the page scale first — click two points a known distance apart.
         </div>
       )}
+
+      {page && loadError && <ReuploadBanner page={page} message={loadError} />}
 
       {selectedMeasurementId && (
         <SelectionToolbar
@@ -594,6 +609,89 @@ function CalibrationOverlay(props: {
       {a && <Circle x={a.x} y={a.y} radius={5} fill="#ffd166" />}
       {b && calibDraft.p2 && <Circle x={b.x} y={b.y} radius={5} fill="#ffd166" />}
     </Group>
+  );
+}
+
+function ReuploadBanner({ page, message }: { page: PlanPage; message: string }) {
+  const replacePagePdf = useStore((s) => s.replacePagePdf);
+  const replacePageImage = useStore((s) => s.replacePageImage);
+  const toast = useStore((s) => s.toast);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const expectingPdf = page.source.kind === 'pdf';
+  const pageIndex = expectingPdf ? (page.source as { pageIndex: number }).pageIndex : 0;
+
+  async function handleFiles(files: FileList | null) {
+    if (!files || files.length === 0) return;
+    const file = files[0];
+    if (expectingPdf) {
+      if (file.type !== 'application/pdf') {
+        toast('This page was a PDF — please upload a PDF to restore it.', 'error');
+        return;
+      }
+      const buf = await file.arrayBuffer();
+      try {
+        const { loadPdfMetadata } = await import('../pdf');
+        const pages = await loadPdfMetadata(buf);
+        const target = pages[pageIndex] ?? pages[0];
+        if (!target) {
+          toast('PDF has no pages.', 'error');
+          return;
+        }
+        replacePagePdf(
+          page.id,
+          buf,
+          target.pageIndex,
+          target.width,
+          target.height,
+          file.name
+        );
+        toast('Plan restored. Your measurements are intact.', 'success');
+      } catch (e) {
+        toast(`Failed to read PDF: ${(e as Error).message}`, 'error');
+      }
+    } else {
+      if (!file.type.startsWith('image/')) {
+        toast('This page was an image — please upload an image.', 'error');
+        return;
+      }
+      const dataUrl = await new Promise<string>((res, rej) => {
+        const r = new FileReader();
+        r.onload = () => res(r.result as string);
+        r.onerror = () => rej(r.error);
+        r.readAsDataURL(file);
+      });
+      const dims = await new Promise<{ w: number; h: number }>((res, rej) => {
+        const img = new Image();
+        img.onload = () => res({ w: img.naturalWidth, h: img.naturalHeight });
+        img.onerror = () => rej(new Error('Image failed to load'));
+        img.src = dataUrl;
+      });
+      replacePageImage(page.id, dataUrl, dims.w, dims.h);
+      toast('Plan restored. Your measurements are intact.', 'success');
+    }
+    if (inputRef.current) inputRef.current.value = '';
+  }
+
+  return (
+    <div className="absolute inset-0 flex items-center justify-center p-6">
+      <div className="max-w-md bg-[#1a1f2b] border border-amber-500 rounded-md p-4 text-center">
+        <div className="text-amber-400 font-semibold mb-2">Plan data missing</div>
+        <div className="text-sm text-muted mb-4">{message}</div>
+        <button
+          className="px-4 py-2 rounded bg-accent hover:bg-blue-500 text-white text-sm"
+          onClick={() => inputRef.current?.click()}
+        >
+          {expectingPdf ? 'Re-upload PDF' : 'Re-upload image'}
+        </button>
+        <input
+          ref={inputRef}
+          type="file"
+          accept={expectingPdf ? 'application/pdf' : 'image/*'}
+          className="hidden"
+          onChange={(e) => handleFiles(e.target.files)}
+        />
+      </div>
+    </div>
   );
 }
 
