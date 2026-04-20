@@ -53,10 +53,16 @@ interface State {
   recentProjects: { id: string; name: string; updatedAt: number }[];
   // transient toast notifications
   toasts: { id: string; message: string; kind: 'info' | 'success' | 'error' }[];
+  // undo stack for recent measurement actions
+  undoStack: (
+    | { kind: 'add_measurement'; id: string }
+    | { kind: 'add_count_point'; id: string }
+  )[];
 
   // actions
   toast: (message: string, kind?: 'info' | 'success' | 'error') => void;
   dismissToast: (id: string) => void;
+  undo: () => void;
   loadOrCreate: () => Promise<void>;
   newProject: () => Promise<void>;
   openProject: (id: string) => Promise<void>;
@@ -124,6 +130,7 @@ export const useStore = create<State>((set, get) => ({
   selectedMeasurementId: null,
   recentProjects: [],
   toasts: [],
+  undoStack: [],
 
   toast: (message, kind = 'info') => {
     const id = uuid();
@@ -133,6 +140,46 @@ export const useStore = create<State>((set, get) => ({
     }, 3500);
   },
   dismissToast: (id) => set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) })),
+
+  undo: () => {
+    const { undoStack, project } = get();
+    if (undoStack.length === 0) {
+      get().toast('Nothing to undo.', 'info');
+      return;
+    }
+    const entry = undoStack[undoStack.length - 1];
+    if (entry.kind === 'add_measurement') {
+      set((s) => ({
+        project: {
+          ...s.project,
+          measurements: s.project.measurements.filter((m) => m.id !== entry.id),
+        },
+        undoStack: s.undoStack.slice(0, -1),
+        selectedMeasurementId: s.selectedMeasurementId === entry.id ? null : s.selectedMeasurementId,
+      }));
+    } else {
+      // add_count_point — pop the last point from that measurement
+      const target = project.measurements.find((m) => m.id === entry.id);
+      if (!target) {
+        set((s) => ({ undoStack: s.undoStack.slice(0, -1) }));
+        return;
+      }
+      const nextPoints = target.points.slice(0, -1);
+      set((s) => ({
+        project: {
+          ...s.project,
+          measurements:
+            nextPoints.length === 0
+              ? s.project.measurements.filter((m) => m.id !== entry.id)
+              : s.project.measurements.map((m) =>
+                  m.id === entry.id ? { ...m, points: nextPoints } : m
+                ),
+        },
+        undoStack: s.undoStack.slice(0, -1),
+      }));
+    }
+    scheduleSave(get);
+  },
 
   loadOrCreate: async () => {
     const all = await db.projects.orderBy('updatedAt').reverse().toArray();
@@ -350,6 +397,7 @@ export const useStore = create<State>((set, get) => ({
     set((s) => ({
       project: { ...s.project, measurements: [...s.project.measurements, m] },
       draftPoints: [],
+      undoStack: [...s.undoStack, { kind: 'add_measurement' as const, id: m.id }].slice(-50),
     }));
     scheduleSave(get);
   },
@@ -371,6 +419,7 @@ export const useStore = create<State>((set, get) => ({
             m.id === existing.id ? { ...m, points: [...m.points, p] } : m
           ),
         },
+        undoStack: [...s.undoStack, { kind: 'add_count_point' as const, id: existing.id }].slice(-50),
       }));
     } else {
       const m: Measurement = {
@@ -381,6 +430,7 @@ export const useStore = create<State>((set, get) => ({
       };
       set((s) => ({
         project: { ...s.project, measurements: [...s.project.measurements, m] },
+        undoStack: [...s.undoStack, { kind: 'add_measurement' as const, id: m.id }].slice(-50),
       }));
     }
     scheduleSave(get);
@@ -423,6 +473,7 @@ export const useStore = create<State>((set, get) => ({
     set((s) => ({
       project: { ...s.project, measurements: [...s.project.measurements, m] },
       rectDraft: {},
+      undoStack: [...s.undoStack, { kind: 'add_measurement' as const, id: m.id }].slice(-50),
     }));
     scheduleSave(get);
   },
