@@ -15,6 +15,9 @@ export function ConditionsPanel() {
   const updateCondition = useStore((s) => s.updateCondition);
   const removeCondition = useStore((s) => s.removeCondition);
   const setTool = useStore((s) => s.setTool);
+  const activePageId = useStore((s) => s.activePageId);
+  const pages = useStore((s) => s.project.pages);
+  const toast = useStore((s) => s.toast);
 
   return (
     <div className="flex flex-col flex-1 min-h-0 border-b border-[#222837]">
@@ -58,6 +61,16 @@ export function ConditionsPanel() {
               }`}
               onClick={() => {
                 setActive(c.id);
+                const page = pages.find((p) => p.id === activePageId);
+                if (!page) {
+                  toast('Upload or select a plan first.', 'info');
+                  return;
+                }
+                if (!page.scale) {
+                  toast('Set the page scale first — Calibrate tool is active.', 'info');
+                  setTool('calibrate');
+                  return;
+                }
                 setTool(c.type);
               }}
             >

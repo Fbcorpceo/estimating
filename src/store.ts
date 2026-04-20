@@ -49,8 +49,12 @@ interface State {
   selectedMeasurementId: string | null;
   // recent project list (id, name, updatedAt)
   recentProjects: { id: string; name: string; updatedAt: number }[];
+  // transient toast notifications
+  toasts: { id: string; message: string; kind: 'info' | 'success' | 'error' }[];
 
   // actions
+  toast: (message: string, kind?: 'info' | 'success' | 'error') => void;
+  dismissToast: (id: string) => void;
   loadOrCreate: () => Promise<void>;
   newProject: () => Promise<void>;
   openProject: (id: string) => Promise<void>;
@@ -114,6 +118,16 @@ export const useStore = create<State>((set, get) => ({
   calibDraft: {},
   selectedMeasurementId: null,
   recentProjects: [],
+  toasts: [],
+
+  toast: (message, kind = 'info') => {
+    const id = uuid();
+    set((s) => ({ toasts: [...s.toasts, { id, message, kind }] }));
+    setTimeout(() => {
+      set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) }));
+    }, 3500);
+  },
+  dismissToast: (id) => set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) })),
 
   loadOrCreate: async () => {
     const all = await db.projects.orderBy('updatedAt').reverse().toArray();
@@ -184,6 +198,9 @@ export const useStore = create<State>((set, get) => ({
     set((s) => ({
       project: { ...s.project, pages: [...s.project.pages, page] },
       activePageId: page.id,
+      tool: 'calibrate',
+      calibDraft: {},
+      draftPoints: [],
     }));
     scheduleSave(get);
   },
@@ -201,6 +218,9 @@ export const useStore = create<State>((set, get) => ({
         pages: [...s.project.pages, ...newPages],
       },
       activePageId: newPages[0]?.id ?? s.activePageId,
+      tool: 'calibrate',
+      calibDraft: {},
+      draftPoints: [],
     }));
     scheduleSave(get);
   },
@@ -224,7 +244,15 @@ export const useStore = create<State>((set, get) => ({
   },
 
   setActivePage: (pageId) => {
-    set({ activePageId: pageId, draftPoints: [], calibDraft: {}, selectedMeasurementId: null });
+    const page = get().project.pages.find((p) => p.id === pageId);
+    const needsCalibration = !!page && !page.scale;
+    set((s) => ({
+      activePageId: pageId,
+      draftPoints: [],
+      calibDraft: {},
+      selectedMeasurementId: null,
+      tool: needsCalibration ? 'calibrate' : s.tool,
+    }));
   },
 
   renamePage: (pageId, name) => {
@@ -358,21 +386,29 @@ export const useStore = create<State>((set, get) => ({
   clearCalib: () => set({ calibDraft: {} }),
 
   applyCalibration: (realDistance) => {
-    const { calibDraft, activePageId } = get();
+    const { calibDraft, activePageId, project, activeConditionId } = get();
     if (!activePageId || !calibDraft.p1 || !calibDraft.p2 || realDistance <= 0) return;
     const scale: PageScale = {
       p1: calibDraft.p1,
       p2: calibDraft.p2,
       realDistance,
     };
+    const activeCond = project.conditions.find((c) => c.id === activeConditionId);
+    const nextTool: ToolMode = activeCond ? activeCond.type : 'pan';
     set((s) => ({
       project: {
         ...s.project,
         pages: s.project.pages.map((p) => (p.id === activePageId ? { ...p, scale } : p)),
       },
       calibDraft: {},
-      tool: 'pan',
+      tool: nextTool,
     }));
+    get().toast(
+      activeCond
+        ? `Scale set to ${realDistance.toFixed(2)} ft — drawing ${activeCond.name}`
+        : `Scale set to ${realDistance.toFixed(2)} ft`,
+      'success'
+    );
     scheduleSave(get);
   },
 

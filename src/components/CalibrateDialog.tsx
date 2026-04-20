@@ -1,6 +1,13 @@
 import { useMemo, useState } from 'react';
 import { useStore } from '../store';
 
+const PRESETS: { label: string; feet: string; inches: string }[] = [
+  { label: '1 ft', feet: '1', inches: '0' },
+  { label: '5 ft', feet: '5', inches: '0' },
+  { label: '10 ft', feet: '10', inches: '0' },
+  { label: '20 ft', feet: '20', inches: '0' },
+];
+
 export function CalibrateDialog({ onClose }: { onClose: () => void }) {
   const calibDraft = useStore((s) => s.calibDraft);
   const applyCalibration = useStore((s) => s.applyCalibration);
@@ -16,11 +23,13 @@ export function CalibrateDialog({ onClose }: { onClose: () => void }) {
   const [feet, setFeet] = useState('10');
   const [inches, setInches] = useState('0');
 
+  const f = parseFloat(feet) || 0;
+  const i = parseFloat(inches) || 0;
+  const total = f + i / 12;
+  const invalid = total <= 0;
+
   function submit() {
-    const f = parseFloat(feet) || 0;
-    const i = parseFloat(inches) || 0;
-    const total = f + i / 12;
-    if (total <= 0) return;
+    if (invalid) return;
     applyCalibration(total);
     onClose();
   }
@@ -54,6 +63,20 @@ export function CalibrateDialog({ onClose }: { onClose: () => void }) {
             />
           </label>
         </div>
+        <div className="flex flex-wrap gap-1 mb-3">
+          {PRESETS.map((p) => (
+            <button
+              key={p.label}
+              className="px-2 py-1 rounded bg-[#2a3142] hover:bg-[#343c52] text-xs"
+              onClick={() => {
+                setFeet(p.feet);
+                setInches(p.inches);
+              }}
+            >
+              {p.label}
+            </button>
+          ))}
+        </div>
         <div className="flex justify-end gap-2">
           <button
             className="px-3 py-1 rounded bg-[#2a3142] hover:bg-[#343c52]"
@@ -62,8 +85,11 @@ export function CalibrateDialog({ onClose }: { onClose: () => void }) {
             Cancel
           </button>
           <button
-            className="px-3 py-1 rounded bg-accent hover:bg-blue-500 text-white"
+            className={`px-3 py-1 rounded text-white ${
+              invalid ? 'bg-[#2a3142] opacity-60 cursor-not-allowed' : 'bg-accent hover:bg-blue-500'
+            }`}
             onClick={submit}
+            disabled={invalid}
           >
             Apply
           </button>
