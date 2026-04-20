@@ -330,6 +330,12 @@ export function PlanCanvas() {
         {!page?.scale && page && <> · <span className="text-amber-400">Not calibrated</span></>}
       </div>
 
+      {page && !page.scale && (
+        <div className="absolute top-3 left-1/2 -translate-x-1/2 px-4 py-2 rounded-md bg-amber-500/95 text-black text-sm font-medium shadow-lg pointer-events-none">
+          Set the page scale first — click two points a known distance apart.
+        </div>
+      )}
+
       {showCalibDialog && (
         <CalibrateDialog
           onClose={() => {

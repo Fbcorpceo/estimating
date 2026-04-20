@@ -5,6 +5,7 @@ import { PagesPanel } from './components/PagesPanel';
 import { ConditionsPanel } from './components/ConditionsPanel';
 import { PlanCanvas } from './components/PlanCanvas';
 import { EstimatePanel } from './components/EstimatePanel';
+import { Toasts } from './components/Toasts';
 import { useStore } from './store';
 
 export default function App() {
@@ -28,6 +29,7 @@ export default function App() {
           <EstimatePanel />
         </aside>
       </div>
+      <Toasts />
     </div>
   );
 }
