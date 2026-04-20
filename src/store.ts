@@ -45,6 +45,8 @@ interface State {
   draftPoints: Point[];
   // calibration draft
   calibDraft: { p1?: Point; p2?: Point };
+  // rectangle drag draft
+  rectDraft: { start?: Point; end?: Point };
   // selection
   selectedMeasurementId: string | null;
   // recent project list (id, name, updatedAt)
@@ -87,6 +89,8 @@ interface State {
 
   // calibration
   setCalibPoint: (which: 'p1' | 'p2', p: Point) => void;
+  setRectDraft: (d: { start?: Point; end?: Point }) => void;
+  commitRect: () => void;
   clearCalib: () => void;
   applyCalibration: (realDistance: number) => void;
   clearPageScale: () => void;
@@ -116,6 +120,7 @@ export const useStore = create<State>((set, get) => ({
   tool: 'pan',
   draftPoints: [],
   calibDraft: {},
+  rectDraft: {},
   selectedMeasurementId: null,
   recentProjects: [],
   toasts: [],
@@ -266,7 +271,7 @@ export const useStore = create<State>((set, get) => ({
   },
 
   setTool: (t) => {
-    set({ tool: t, draftPoints: [], calibDraft: {} });
+    set({ tool: t, draftPoints: [], calibDraft: {}, rectDraft: {} });
   },
 
   setActiveCondition: (id) => set({ activeConditionId: id }),
@@ -384,6 +389,43 @@ export const useStore = create<State>((set, get) => ({
   setCalibPoint: (which, p) =>
     set((s) => ({ calibDraft: { ...s.calibDraft, [which]: p } })),
   clearCalib: () => set({ calibDraft: {} }),
+
+  setRectDraft: (d) => set({ rectDraft: d }),
+  commitRect: () => {
+    const { rectDraft, project, activeConditionId, activePageId } = get();
+    if (!activePageId || !activeConditionId) return;
+    if (!rectDraft.start || !rectDraft.end) return;
+    const { start, end } = rectDraft;
+    const minX = Math.min(start.x, end.x);
+    const maxX = Math.max(start.x, end.x);
+    const minY = Math.min(start.y, end.y);
+    const maxY = Math.max(start.y, end.y);
+    if (maxX - minX < 2 || maxY - minY < 2) {
+      set({ rectDraft: {} });
+      return;
+    }
+    const cond = project.conditions.find((c) => c.id === activeConditionId);
+    if (!cond || cond.type !== 'area') {
+      set({ rectDraft: {} });
+      return;
+    }
+    const m: Measurement = {
+      id: uuid(),
+      conditionId: cond.id,
+      pageId: activePageId,
+      points: [
+        { x: minX, y: minY },
+        { x: maxX, y: minY },
+        { x: maxX, y: maxY },
+        { x: minX, y: maxY },
+      ],
+    };
+    set((s) => ({
+      project: { ...s.project, measurements: [...s.project.measurements, m] },
+      rectDraft: {},
+    }));
+    scheduleSave(get);
+  },
 
   applyCalibration: (realDistance) => {
     const { calibDraft, activePageId, project, activeConditionId } = get();
