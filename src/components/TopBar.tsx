@@ -47,7 +47,10 @@ export function TopBar() {
 
   return (
     <div className="flex items-center gap-3 h-12 px-3 border-b border-[#222837] bg-panel">
-      <div className="font-semibold text-ink">Takeoff</div>
+      <div className="flex items-center gap-2">
+        <img src="/fb-logo.svg" alt="FB" className="h-8 w-auto" />
+        <div className="font-semibold text-ink tracking-wide">Takeoff</div>
+      </div>
       <div className="h-6 w-px bg-[#2a3142]" />
       <input
         className="bg-transparent border-0 px-2 py-1 text-ink min-w-[200px] focus:bg-[#1a1f2b] rounded"
