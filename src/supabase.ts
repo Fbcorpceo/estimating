@@ -16,6 +16,9 @@ export const supabase: SupabaseClient = createClient(
       persistSession: true,
       autoRefreshToken: true,
       detectSessionInUrl: true,
+      // Implicit flow lets magic links be clicked from any browser/device
+      // without requiring the code verifier that PKCE stores client-side.
+      flowType: 'implicit',
       storageKey: 'fb-takeoff-auth',
     },
   }
