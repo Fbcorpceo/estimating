@@ -32,6 +32,10 @@ export interface Condition {
   // computed as Length (ft) × wallHeight (ft) = area in SF, and the
   // condition is priced per SF.
   wallHeight?: number;
+  // When true, this condition's measurements are not drawn on the
+  // canvas and can't be clicked — useful when tracing over an area
+  // already covered by another condition.
+  hidden?: boolean;
 }
 
 export interface Measurement {
