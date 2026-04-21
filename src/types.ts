@@ -28,6 +28,10 @@ export interface Condition {
   unit: Unit;
   unitCost: number; // $ per unit
   wastePct: number; // 0..100
+  // Only meaningful for linear conditions. When set, the quantity is
+  // computed as Length (ft) × wallHeight (ft) = area in SF, and the
+  // condition is priced per SF.
+  wallHeight?: number;
 }
 
 export interface Measurement {

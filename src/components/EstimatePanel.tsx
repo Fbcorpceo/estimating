@@ -10,6 +10,7 @@ interface ConditionRow {
   unit: string;
   unitCost: number;
   wastePct: number;
+  wallHeight?: number;
   baseQuantity: number; // in base unit
   displayQuantity: number; // in condition's unit
   withWaste: number; // displayQuantity * (1 + wastePct/100)
@@ -28,16 +29,25 @@ export function EstimatePanel() {
       for (const m of ms) {
         base += measurementBaseQuantity(m, pageScale.get(m.pageId), c.type);
       }
-      const display = convertQuantity(base, c.type, c.unit);
+      // Linear + wallHeight converts LF to SF via height multiplier.
+      let display: number;
+      let unit = c.unit;
+      if (c.type === 'linear' && c.wallHeight) {
+        display = base * c.wallHeight;
+        unit = 'sf';
+      } else {
+        display = convertQuantity(base, c.type, c.unit);
+      }
       const withWaste = display * (1 + c.wastePct / 100);
       const cost = withWaste * c.unitCost;
       return {
         conditionId: c.id,
         name: c.name,
         type: c.type,
-        unit: c.unit,
+        unit,
         unitCost: c.unitCost,
         wastePct: c.wastePct,
+        wallHeight: c.wallHeight,
         baseQuantity: base,
         displayQuantity: display,
         withWaste,
@@ -123,7 +133,8 @@ export function EstimatePanel() {
                       <span className="truncate">{r.name}</span>
                     </div>
                     <div className="text-muted">
-                      {r.type} · {r.unit}
+                      {r.type}
+                      {r.wallHeight ? ` · ${r.wallHeight}ft wall` : ''} · {r.unit}
                     </div>
                   </td>
                   <td className="text-right px-2 py-1">{formatNumber(r.displayQuantity, 2)}</td>

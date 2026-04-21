@@ -482,6 +482,9 @@ function MeasurementsLayer(props: {
         if (cond.type === 'linear') {
           const lengthFt = ppf > 0 ? polylineLengthPx(m.points) / ppf : 0;
           const mid = pts[Math.floor(pts.length / 2)] ?? pts[0];
+          const label = cond.wallHeight
+            ? `${formatNumber(lengthFt * cond.wallHeight, 1)} sf · ${formatNumber(lengthFt, 1)} lf × ${cond.wallHeight}ft`
+            : `${formatNumber(lengthFt, 2)} ${cond.unit}`;
           return (
             <Group key={m.id} name={`m:${m.id}`} onClick={() => onSelect(m.id)}>
               <Line
@@ -495,9 +498,7 @@ function MeasurementsLayer(props: {
               {pts.map((p, i) => (
                 <Circle key={i} x={p.x} y={p.y} radius={3} fill={stroke} />
               ))}
-              {ppf > 0 && (
-                <LabelBadge x={mid.x} y={mid.y} text={`${formatNumber(lengthFt, 2)} ${cond.unit}`} />
-              )}
+              {ppf > 0 && <LabelBadge x={mid.x} y={mid.y} text={label} />}
             </Group>
           );
         }
@@ -710,7 +711,13 @@ function SelectionToolbar(props: {
   let quantity = 0;
   let unit = cond.unit;
   if (cond.type === 'linear' && ppf > 0) {
-    quantity = polylineLengthPx(m.points) / ppf;
+    const lengthFt = polylineLengthPx(m.points) / ppf;
+    if (cond.wallHeight) {
+      quantity = lengthFt * cond.wallHeight;
+      unit = 'sf';
+    } else {
+      quantity = lengthFt;
+    }
   } else if (cond.type === 'area' && ppf > 0) {
     const sf = polygonAreaPx(m.points) / (ppf * ppf);
     quantity = cond.unit === 'sy' ? sf / 9 : sf;

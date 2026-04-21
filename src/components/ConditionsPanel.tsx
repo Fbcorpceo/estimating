@@ -7,6 +7,13 @@ const UNITS_BY_TYPE: Record<MeasurementType, Unit[]> = {
   count: ['ea'],
 };
 
+const WALL_HEIGHT_OPTIONS = [
+  { label: 'None (measure LF)', value: '' },
+  { label: '8 ft', value: '8' },
+  { label: '9 ft', value: '9' },
+  { label: '10 ft', value: '10' },
+];
+
 export function ConditionsPanel() {
   const conditions = useStore((s) => s.project.conditions);
   const activeConditionId = useStore((s) => s.activeConditionId);
@@ -121,12 +128,16 @@ export function ConditionsPanel() {
                     value={c.unit}
                     onChange={(e) => updateCondition(c.id, { unit: e.target.value as Unit })}
                     onClick={(e) => e.stopPropagation()}
+                    disabled={c.type === 'linear' && !!c.wallHeight}
                   >
                     {UNITS_BY_TYPE[c.type].map((u) => (
                       <option key={u} value={u}>
                         {u.toUpperCase()}
                       </option>
                     ))}
+                    {c.type === 'linear' && c.wallHeight && (
+                      <option value="sf">SF</option>
+                    )}
                   </select>
                 </label>
                 <label className="flex flex-col gap-1">
@@ -143,6 +154,29 @@ export function ConditionsPanel() {
                     onClick={(e) => e.stopPropagation()}
                   />
                 </label>
+                {c.type === 'linear' && (
+                  <label className="flex flex-col gap-1 col-span-3">
+                    <span className="text-muted">
+                      Wall height{' '}
+                      <span className="text-[10px]">(Length × Height → SF)</span>
+                    </span>
+                    <select
+                      value={c.wallHeight ?? ''}
+                      onChange={(e) =>
+                        updateCondition(c.id, {
+                          wallHeight: e.target.value ? Number(e.target.value) : undefined,
+                        })
+                      }
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      {WALL_HEIGHT_OPTIONS.map((o) => (
+                        <option key={o.value} value={o.value}>
+                          {o.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                )}
                 <label className="flex flex-col gap-1 col-span-3">
                   <span className="text-muted">Unit cost ($/{c.unit})</span>
                   <input
