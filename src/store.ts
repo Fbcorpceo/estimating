@@ -389,6 +389,12 @@ export const useStore = create<State>((set, get) => ({
           // keep unit consistent with type if type changed
           if (patch.type && !patch.unit) {
             next.unit = patch.type === 'linear' ? 'lf' : patch.type === 'count' ? 'ea' : 'sf';
+            // Changing away from linear clears the wall height
+            if (patch.type !== 'linear') next.wallHeight = undefined;
+          }
+          // For linear conditions, wallHeight drives the unit.
+          if (next.type === 'linear' && 'wallHeight' in patch) {
+            next.unit = patch.wallHeight ? 'sf' : 'lf';
           }
           return next;
         }),
