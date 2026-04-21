@@ -67,7 +67,11 @@ export interface PlanPage {
 export interface PdfFile {
   id: string;
   name: string;
+  // Local cached bytes. Empty when the project was loaded from cloud and the
+  // file hasn't been fetched from Storage yet.
   data: ArrayBuffer;
+  // Cloud Storage path, e.g. "{workspace}/{project}/{fileId}.pdf".
+  storagePath?: string;
 }
 
 export interface Project {
