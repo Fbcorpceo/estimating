@@ -448,6 +448,7 @@ function MeasurementsLayer(props: {
       {measurements.map((m) => {
         const cond = condById.get(m.conditionId);
         if (!cond) return null;
+        if (cond.hidden) return null;
         const pts = m.points.map(toScreen);
         const isSelected = m.id === selectedId;
         const stroke = cond.color;
