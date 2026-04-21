@@ -10,6 +10,14 @@ import type {
   ToolMode,
 } from './types';
 import { db } from './db';
+import {
+  deleteProjectCloud,
+  downloadPdf,
+  listProjects as cloudListProjects,
+  loadProject as cloudLoadProject,
+  upsertProject as cloudUpsertProject,
+  uploadPdf,
+} from './cloud';
 
 const DEFAULT_COLORS = [
   '#4f8cff',
@@ -36,38 +44,46 @@ function newProject(name = 'Untitled Project'): Project {
   };
 }
 
+export interface AuthContext {
+  userId: string;
+  workspaceId: string;
+  email: string;
+}
+
 interface State {
   project: Project;
   activePageId: string | null;
   activeConditionId: string | null;
   tool: ToolMode;
-  // in-progress drawing buffer (image-space points)
   draftPoints: Point[];
-  // calibration draft
   calibDraft: { p1?: Point; p2?: Point };
-  // rectangle drag draft
   rectDraft: { start?: Point; end?: Point };
-  // selection
   selectedMeasurementId: string | null;
-  // recent project list (id, name, updatedAt)
   recentProjects: { id: string; name: string; updatedAt: number }[];
-  // transient toast notifications
   toasts: { id: string; message: string; kind: 'info' | 'success' | 'error' }[];
-  // undo stack for recent measurement actions
   undoStack: (
     | { kind: 'add_measurement'; id: string }
     | { kind: 'add_count_point'; id: string }
   )[];
+  // Auth / workspace info, set after sign in.
+  auth: AuthContext | null;
+  // PDF bytes cache keyed by fileId, populated on upload or on-demand fetch.
+  pdfBytesCache: Record<string, ArrayBuffer>;
+  // True while the most-recent cloud save is in flight.
+  saving: boolean;
+  saveError: string | null;
 
   // actions
   toast: (message: string, kind?: 'info' | 'success' | 'error') => void;
   dismissToast: (id: string) => void;
   undo: () => void;
+  setAuthContext: (a: AuthContext | null) => Promise<void>;
   loadOrCreate: () => Promise<void>;
   newProject: () => Promise<void>;
   openProject: (id: string) => Promise<void>;
   renameProject: (name: string) => void;
   deleteProject: (id: string) => Promise<void>;
+  ensurePdfBytes: (fileId: string) => Promise<ArrayBuffer | null>;
 
   addImagePage: (name: string, dataUrl: string, width: number, height: number) => void;
   addPdfPages: (
@@ -111,14 +127,23 @@ interface State {
 }
 
 let saveTimer: ReturnType<typeof setTimeout> | null = null;
-function scheduleSave(get: () => State) {
+function scheduleSave(get: () => State, setFn: (patch: Partial<State>) => void) {
   if (saveTimer) clearTimeout(saveTimer);
   saveTimer = setTimeout(async () => {
-    const p = get().project;
-    p.updatedAt = Date.now();
-    await db.projects.put(structuredClone(p));
-    get().refreshRecent();
-  }, 250);
+    const { project, auth } = get();
+    if (!auth) return;
+    setFn({ saving: true, saveError: null });
+    try {
+      project.updatedAt = Date.now();
+      await cloudUpsertProject(auth.workspaceId, project, auth.userId);
+      setFn({ saving: false });
+      await get().refreshRecent();
+    } catch (e) {
+      const msg = (e as Error).message || 'Save failed';
+      setFn({ saving: false, saveError: msg });
+      get().toast(`Sync failed: ${msg}`, 'error');
+    }
+  }, 500);
 }
 
 export const useStore = create<State>((set, get) => ({
@@ -133,6 +158,39 @@ export const useStore = create<State>((set, get) => ({
   recentProjects: [],
   toasts: [],
   undoStack: [],
+  auth: null,
+  pdfBytesCache: {},
+  saving: false,
+  saveError: null,
+
+  setAuthContext: async (a) => {
+    set({ auth: a });
+    if (a) {
+      await get().loadOrCreate();
+    }
+  },
+
+  ensurePdfBytes: async (fileId) => {
+    const { pdfBytesCache, project } = get();
+    const cached = pdfBytesCache[fileId];
+    if (cached && cached.byteLength > 0) return cached;
+    const file = project.pdfFiles.find((f) => f.id === fileId);
+    if (!file) return null;
+    // In-memory bytes from a recent upload
+    if (file.data && file.data.byteLength > 0) {
+      set((s) => ({ pdfBytesCache: { ...s.pdfBytesCache, [fileId]: file.data } }));
+      return file.data;
+    }
+    if (!file.storagePath) return null;
+    try {
+      const bytes = await downloadPdf(file.storagePath);
+      set((s) => ({ pdfBytesCache: { ...s.pdfBytesCache, [fileId]: bytes } }));
+      return bytes;
+    } catch (e) {
+      console.error('PDF download failed', e);
+      return null;
+    }
+  },
 
   toast: (message, kind = 'info') => {
     const id = uuid();
@@ -180,29 +238,29 @@ export const useStore = create<State>((set, get) => ({
         undoStack: s.undoStack.slice(0, -1),
       }));
     }
-    scheduleSave(get);
+    scheduleSave(get, set);
   },
 
   loadOrCreate: async () => {
-    const all = await db.projects.orderBy('updatedAt').reverse().toArray();
-    if (all.length > 0) {
-      const p = all[0];
-      set({
-        project: p,
-        activePageId: p.pages[0]?.id ?? null,
-        activeConditionId: p.conditions[0]?.id ?? null,
-      });
-    } else {
-      const p = newProject();
-      await db.projects.put(p);
-      set({ project: p });
+    const auth = get().auth;
+    if (!auth) return;
+    try {
+      const list = await cloudListProjects(auth.workspaceId);
+      set({ recentProjects: list });
+      if (list.length > 0) {
+        await get().openProject(list[0].id);
+      } else {
+        await get().newProject();
+      }
+    } catch (e) {
+      get().toast(`Couldn't load projects: ${(e as Error).message}`, 'error');
     }
-    await get().refreshRecent();
   },
 
   newProject: async () => {
+    const auth = get().auth;
+    if (!auth) return;
     const p = newProject();
-    await db.projects.put(p);
     set({
       project: p,
       activePageId: null,
@@ -210,13 +268,21 @@ export const useStore = create<State>((set, get) => ({
       tool: 'pan',
       draftPoints: [],
       calibDraft: {},
+      rectDraft: {},
       selectedMeasurementId: null,
+      undoStack: [],
+      pdfBytesCache: {},
     });
-    await get().refreshRecent();
+    try {
+      await cloudUpsertProject(auth.workspaceId, p, auth.userId);
+      await get().refreshRecent();
+    } catch (e) {
+      get().toast(`Couldn't create project: ${(e as Error).message}`, 'error');
+    }
   },
 
   openProject: async (id) => {
-    const p = await db.projects.get(id);
+    const p = await cloudLoadProject(id);
     if (!p) return;
     set({
       project: p,
@@ -225,21 +291,28 @@ export const useStore = create<State>((set, get) => ({
       tool: 'pan',
       draftPoints: [],
       calibDraft: {},
+      rectDraft: {},
       selectedMeasurementId: null,
+      undoStack: [],
+      pdfBytesCache: {},
     });
   },
 
   renameProject: (name) => {
     set((s) => ({ project: { ...s.project, name } }));
-    scheduleSave(get);
+    scheduleSave(get, set);
   },
 
   deleteProject: async (id) => {
-    await db.projects.delete(id);
-    if (get().project.id === id) {
-      await get().newProject();
-    } else {
-      await get().refreshRecent();
+    try {
+      await deleteProjectCloud(id);
+      if (get().project.id === id) {
+        await get().loadOrCreate();
+      } else {
+        await get().refreshRecent();
+      }
+    } catch (e) {
+      get().toast(`Delete failed: ${(e as Error).message}`, 'error');
     }
   },
 
@@ -256,7 +329,7 @@ export const useStore = create<State>((set, get) => ({
       calibDraft: {},
       draftPoints: [],
     }));
-    scheduleSave(get);
+    scheduleSave(get, set);
   },
 
   addPdfPages: (name, fileId, data, pages) => {
@@ -275,8 +348,30 @@ export const useStore = create<State>((set, get) => ({
       tool: 'calibrate',
       calibDraft: {},
       draftPoints: [],
+      pdfBytesCache: { ...s.pdfBytesCache, [fileId]: data },
     }));
-    scheduleSave(get);
+    // Kick off Storage upload in the background; once done, set the
+    // storagePath on the pdfFile so future sessions can fetch it.
+    const auth = get().auth;
+    if (auth) {
+      const projectId = get().project.id;
+      uploadPdf(auth.workspaceId, projectId, fileId, name, data)
+        .then((path) => {
+          set((s) => ({
+            project: {
+              ...s.project,
+              pdfFiles: s.project.pdfFiles.map((f) =>
+                f.id === fileId ? { ...f, storagePath: path } : f
+              ),
+            },
+          }));
+          scheduleSave(get, set);
+        })
+        .catch((e) => {
+          get().toast(`PDF upload failed: ${(e as Error).message}`, 'error');
+        });
+    }
+    scheduleSave(get, set);
   },
 
   removePage: (pageId) => {
@@ -294,7 +389,7 @@ export const useStore = create<State>((set, get) => ({
         activePageId,
       };
     });
-    scheduleSave(get);
+    scheduleSave(get, set);
   },
 
   setActivePage: (pageId) => {
@@ -316,7 +411,7 @@ export const useStore = create<State>((set, get) => ({
         pages: s.project.pages.map((p) => (p.id === pageId ? { ...p, name } : p)),
       },
     }));
-    scheduleSave(get);
+    scheduleSave(get, set);
   },
 
   replacePagePdf: (pageId, data, pageIndex, width, height, fileName) => {
@@ -335,9 +430,31 @@ export const useStore = create<State>((set, get) => ({
       );
       const pdfFiles = s.project.pdfFiles.filter((f) => usedFileIds.has(f.id));
       pdfFiles.push({ id: fileId, name: fileName, data });
-      return { project: { ...s.project, pages, pdfFiles } };
+      return {
+        project: { ...s.project, pages, pdfFiles },
+        pdfBytesCache: { ...s.pdfBytesCache, [fileId]: data },
+      };
     });
-    scheduleSave(get);
+    const auth = get().auth;
+    if (auth) {
+      const projectId = get().project.id;
+      uploadPdf(auth.workspaceId, projectId, fileId, fileName, data)
+        .then((path) => {
+          set((s) => ({
+            project: {
+              ...s.project,
+              pdfFiles: s.project.pdfFiles.map((f) =>
+                f.id === fileId ? { ...f, storagePath: path } : f
+              ),
+            },
+          }));
+          scheduleSave(get, set);
+        })
+        .catch((e) => {
+          get().toast(`PDF upload failed: ${(e as Error).message}`, 'error');
+        });
+    }
+    scheduleSave(get, set);
   },
 
   replacePageImage: (pageId, dataUrl, width, height) => {
@@ -351,7 +468,7 @@ export const useStore = create<State>((set, get) => ({
         ),
       },
     }));
-    scheduleSave(get);
+    scheduleSave(get, set);
   },
 
   setTool: (t) => {
@@ -375,7 +492,7 @@ export const useStore = create<State>((set, get) => ({
       project: { ...s.project, conditions: [...s.project.conditions, cond] },
       activeConditionId: cond.id,
     }));
-    scheduleSave(get);
+    scheduleSave(get, set);
     return cond.id;
   },
 
@@ -400,7 +517,7 @@ export const useStore = create<State>((set, get) => ({
         }),
       },
     }));
-    scheduleSave(get);
+    scheduleSave(get, set);
   },
 
   removeCondition: (id) => {
@@ -415,7 +532,7 @@ export const useStore = create<State>((set, get) => ({
           ? s.project.conditions.find((c) => c.id !== id)?.id ?? null
           : s.activeConditionId,
     }));
-    scheduleSave(get);
+    scheduleSave(get, set);
   },
 
   pushDraftPoint: (p) => set((s) => ({ draftPoints: [...s.draftPoints, p] })),
@@ -442,7 +559,7 @@ export const useStore = create<State>((set, get) => ({
       draftPoints: [],
       undoStack: [...s.undoStack, { kind: 'add_measurement' as const, id: m.id }].slice(-50),
     }));
-    scheduleSave(get);
+    scheduleSave(get, set);
   },
 
   addCountMarker: (p) => {
@@ -476,7 +593,7 @@ export const useStore = create<State>((set, get) => ({
         undoStack: [...s.undoStack, { kind: 'add_measurement' as const, id: m.id }].slice(-50),
       }));
     }
-    scheduleSave(get);
+    scheduleSave(get, set);
   },
 
   setCalibPoint: (which, p) =>
@@ -518,7 +635,7 @@ export const useStore = create<State>((set, get) => ({
       rectDraft: {},
       undoStack: [...s.undoStack, { kind: 'add_measurement' as const, id: m.id }].slice(-50),
     }));
-    scheduleSave(get);
+    scheduleSave(get, set);
   },
 
   applyCalibration: (realDistance) => {
@@ -545,7 +662,7 @@ export const useStore = create<State>((set, get) => ({
         : `Scale set to ${realDistance.toFixed(2)} ft`,
       'success'
     );
-    scheduleSave(get);
+    scheduleSave(get, set);
   },
 
   clearPageScale: () => {
@@ -559,7 +676,7 @@ export const useStore = create<State>((set, get) => ({
         ),
       },
     }));
-    scheduleSave(get);
+    scheduleSave(get, set);
   },
 
   selectMeasurement: (id) => set({ selectedMeasurementId: id }),
@@ -572,7 +689,7 @@ export const useStore = create<State>((set, get) => ({
       },
       selectedMeasurementId: s.selectedMeasurementId === id ? null : s.selectedMeasurementId,
     }));
-    scheduleSave(get);
+    scheduleSave(get, set);
   },
 
   removeMeasurementPoint: (mId, idx) => {
@@ -586,13 +703,26 @@ export const useStore = create<State>((set, get) => ({
         .filter((m) => m.points.length > 0);
       return { project: { ...s.project, measurements: next } };
     });
-    scheduleSave(get);
+    scheduleSave(get, set);
   },
 
   refreshRecent: async () => {
-    const all = await db.projects.orderBy('updatedAt').reverse().toArray();
-    set({
-      recentProjects: all.map((p) => ({ id: p.id, name: p.name, updatedAt: p.updatedAt })),
-    });
+    const auth = get().auth;
+    if (!auth) return;
+    try {
+      const list = await cloudListProjects(auth.workspaceId);
+      set({ recentProjects: list });
+    } catch (e) {
+      console.error('refreshRecent failed', e);
+    }
   },
 }));
+
+// Expose legacy Dexie access for migration.
+export async function listLegacyProjects(): Promise<Project[]> {
+  return db.projects.orderBy('updatedAt').reverse().toArray();
+}
+
+export async function clearLegacyProject(id: string): Promise<void> {
+  await db.projects.delete(id);
+}

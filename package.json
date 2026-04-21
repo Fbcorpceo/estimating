@@ -10,6 +10,7 @@
     "typecheck": "tsc -b --noEmit"
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.104.0",
     "dexie": "^4.0.8",
     "konva": "^9.3.16",
     "pdfjs-dist": "^4.7.76",

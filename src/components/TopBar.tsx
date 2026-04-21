@@ -1,6 +1,7 @@
 import { useRef } from 'react';
 import { useStore } from '../store';
 import { loadPdfMetadata } from '../pdf';
+import { signOut } from '../auth';
 import { v4 as uuid } from 'uuid';
 
 export function TopBar() {
@@ -12,6 +13,9 @@ export function TopBar() {
   const recent = useStore((s) => s.recentProjects);
   const addImagePage = useStore((s) => s.addImagePage);
   const addPdfPages = useStore((s) => s.addPdfPages);
+  const saving = useStore((s) => s.saving);
+  const saveError = useStore((s) => s.saveError);
+  const auth = useStore((s) => s.auth);
 
   const fileInput = useRef<HTMLInputElement>(null);
 
@@ -101,6 +105,24 @@ export function TopBar() {
         }}
       >
         Delete
+      </button>
+      <div className="ml-2 text-xs text-muted min-w-[80px] text-right">
+        {saveError ? (
+          <span className="text-rose-400">Save failed</span>
+        ) : saving ? (
+          <span className="text-muted">Saving…</span>
+        ) : (
+          <span className="text-emerald-400">Synced</span>
+        )}
+      </div>
+      <div className="h-6 w-px bg-[#2a3142]" />
+      <div className="text-xs text-muted">{auth?.email}</div>
+      <button
+        className="px-2 py-1 rounded bg-[#2a3142] hover:bg-[#343c52] text-xs text-ink"
+        onClick={() => signOut()}
+        title="Sign out"
+      >
+        Sign out
       </button>
     </div>
   );

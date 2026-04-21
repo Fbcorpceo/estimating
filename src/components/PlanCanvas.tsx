@@ -37,6 +37,7 @@ export function PlanCanvas() {
   const setRectDraft = useStore((s) => s.setRectDraft);
   const commitRect = useStore((s) => s.commitRect);
   const undo = useStore((s) => s.undo);
+  const ensurePdfBytes = useStore((s) => s.ensurePdfBytes);
 
   const page = useMemo(
     () => project.pages.find((p) => p.id === activePageId) ?? null,
@@ -82,21 +83,37 @@ export function PlanCanvas() {
       img.src = page.source.dataUrl;
     } else {
       const file = project.pdfFiles.find((f) => f.id === (page.source as any).fileId);
-      if (!file || !file.data || (file.data as ArrayBuffer).byteLength === 0) {
-        setLoadError(
-          'PDF data is missing for this page (likely from an older save). Please re-upload the PDF — your measurements will be kept.'
-        );
+      if (!file) {
+        setLoadError('PDF reference is missing. Please re-upload the PDF.');
         return;
       }
-      renderPdfPage(file.data, page.source.pageIndex, 2)
-        .then((c) => {
-          if (!cancelled) setPlanImage(c);
-        })
-        .catch((e) => {
+      (async () => {
+        let bytes: ArrayBuffer | null = file.data && file.data.byteLength > 0 ? file.data : null;
+        if (!bytes) {
+          bytes = await ensurePdfBytes(file.id);
+        }
+        if (cancelled) return;
+        if (!bytes) {
+          if (file.storagePath) {
+            setLoadError(
+              "Couldn't download this PDF from the cloud. Re-upload or try again."
+            );
+          } else {
+            setLoadError(
+              'PDF data is missing for this page (legacy local save). Please re-upload the PDF — your measurements will be kept.'
+            );
+          }
+          return;
+        }
+        try {
+          const pageIdx = (page.source as { pageIndex: number }).pageIndex;
+          const canvas = await renderPdfPage(bytes, pageIdx, 2);
+          if (!cancelled) setPlanImage(canvas);
+        } catch (e) {
           console.error('PDF render failed', e);
-          if (!cancelled)
-            setLoadError('The PDF failed to render. Try re-uploading the file.');
-        });
+          if (!cancelled) setLoadError('The PDF failed to render. Try re-uploading the file.');
+        }
+      })();
     }
     return () => {
       cancelled = true;
