@@ -2,11 +2,13 @@ import { useState } from 'react';
 import { signInWithPassword } from '../auth';
 import { supabaseConfigured } from '../supabase';
 
-export function SignInScreen() {
+export function SignInScreen({ initialError }: { initialError?: string | null }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [status, setStatus] = useState<'idle' | 'signing-in' | 'error'>('idle');
-  const [message, setMessage] = useState<string>('');
+  const [status, setStatus] = useState<'idle' | 'signing-in' | 'error'>(
+    initialError ? 'error' : 'idle'
+  );
+  const [message, setMessage] = useState<string>(initialError ?? '');
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
