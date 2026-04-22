@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { Session } from '@supabase/supabase-js';
-import { supabase } from './supabase';
+import { supabase, supabaseConfigured } from './supabase';
 
 export interface Membership {
   workspaceId: string;
@@ -28,38 +28,91 @@ export function useAuth(): AuthState {
 
     async function loadMembership(session: Session | null): Promise<Membership | null> {
       if (!session) return null;
-      const { data, error } = await supabase
-        .from('workspace_members')
-        .select('workspace_id, role, workspaces(name)')
-        .eq('user_id', session.user.id)
-        .order('created_at', { ascending: true })
-        .limit(1)
-        .maybeSingle();
-      if (error || !data) return null;
-      return {
-        workspaceId: data.workspace_id as string,
-        role: data.role as Membership['role'],
-        workspaceName:
-          (data.workspaces as unknown as { name: string } | null)?.name ?? 'Workspace',
+      try {
+        const { data, error } = await supabase
+          .from('workspace_members')
+          .select('workspace_id, role, workspaces(name)')
+          .eq('user_id', session.user.id)
+          .order('created_at', { ascending: true })
+          .limit(1)
+          .maybeSingle();
+        if (error || !data) return null;
+        return {
+          workspaceId: data.workspace_id as string,
+          role: data.role as Membership['role'],
+          workspaceName:
+            (data.workspaces as unknown as { name: string } | null)?.name ?? 'Workspace',
+        };
+      } catch {
+        return null;
+      }
+    }
+
+    // If env vars are missing, don't hang on network calls that can never
+    // succeed — drop straight to the sign-in screen with an error.
+    if (!supabaseConfigured) {
+      setState({
+        loading: false,
+        session: null,
+        membership: null,
+        error: 'Auth is not configured.',
+      });
+      return () => {
+        active = false;
       };
     }
 
-    supabase.auth.getSession().then(async ({ data }) => {
+    // Safety net: if getSession() or the realtime auth channel hangs (bad
+    // persisted token, network blip, detectSessionInUrl stuck on a stale
+    // fragment), don't leave the user staring at "Loading…" forever.
+    const timeout = window.setTimeout(() => {
       if (!active) return;
-      const session = data.session;
-      const membership = await loadMembership(session);
-      if (!active) return;
-      setState({ loading: false, session, membership, error: null });
-    });
+      setState((s) =>
+        s.loading
+          ? {
+              loading: false,
+              session: null,
+              membership: null,
+              error: 'Sign-in is taking too long. Please try again.',
+            }
+          : s
+      );
+    }, 6000);
+
+    (async () => {
+      try {
+        const { data } = await supabase.auth.getSession();
+        if (!active) return;
+        const session = data.session;
+        const membership = await loadMembership(session);
+        if (!active) return;
+        window.clearTimeout(timeout);
+        setState({ loading: false, session, membership, error: null });
+      } catch (e: unknown) {
+        if (!active) return;
+        window.clearTimeout(timeout);
+        const message = e instanceof Error ? e.message : 'Auth error';
+        setState({ loading: false, session: null, membership: null, error: message });
+      }
+    })();
 
     const { data: listener } = supabase.auth.onAuthStateChange(async (_evt, session) => {
-      const membership = await loadMembership(session);
-      if (!active) return;
-      setState({ loading: false, session, membership, error: null });
+      try {
+        const membership = await loadMembership(session);
+        if (!active) return;
+        window.clearTimeout(timeout);
+        setState({ loading: false, session, membership, error: null });
+      } catch (e: unknown) {
+        if (!active) return;
+        window.clearTimeout(timeout);
+        const message = e instanceof Error ? e.message : 'Auth error';
+        setState({ loading: false, session, membership: null, error: message });
+      }
     });
 
     return () => {
       active = false;
+      window.clearTimeout(timeout);
       listener.subscription.unsubscribe();
     };
   }, []);
@@ -115,6 +168,24 @@ export async function signInWithPassword(
         "Account created but email confirmation is enabled. Ask an admin to turn off 'Confirm email' in Supabase → Authentication → Sign In / Providers.",
     };
   }
+  return { ok: true };
+}
+
+export async function signInWithGoogle(): Promise<{ ok: true } | { ok: false; error: string }> {
+  const { error } = await supabase.auth.signInWithOAuth({
+    provider: 'google',
+    options: {
+      redirectTo: `${window.location.origin}/`,
+      // Hint Google to show the account chooser even if the user is already
+      // signed into a Google account — handy for shared machines.
+      queryParams: { prompt: 'select_account' },
+    },
+  });
+  if (error) {
+    return { ok: false, error: error.message };
+  }
+  // signInWithOAuth triggers a full-page redirect, so anything after this
+  // line typically doesn't run.
   return { ok: true };
 }
 
