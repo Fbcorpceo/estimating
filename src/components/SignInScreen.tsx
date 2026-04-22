@@ -1,21 +1,22 @@
 import { useState } from 'react';
-import { sendMagicLink } from '../auth';
+import { signInWithPassword } from '../auth';
 import { supabaseConfigured } from '../supabase';
 
 export function SignInScreen() {
   const [email, setEmail] = useState('');
-  const [status, setStatus] = useState<'idle' | 'sending' | 'sent' | 'error'>('idle');
+  const [password, setPassword] = useState('');
+  const [status, setStatus] = useState<'idle' | 'signing-in' | 'error'>('idle');
   const [message, setMessage] = useState<string>('');
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
-    if (status === 'sending') return;
-    setStatus('sending');
+    if (status === 'signing-in') return;
+    setStatus('signing-in');
     setMessage('');
-    const res = await sendMagicLink(email);
+    const res = await signInWithPassword(email, password);
     if (res.ok) {
-      setStatus('sent');
-      setMessage(`Magic link sent to ${email}. Check your inbox.`);
+      // Auth state listener in App will swap to the main UI.
+      setStatus('idle');
     } else {
       setStatus('error');
       setMessage(res.error);
@@ -43,31 +44,30 @@ export function SignInScreen() {
               onChange={(e) => setEmail(e.target.value)}
               required
               autoFocus
-              disabled={status === 'sent'}
+              autoComplete="username"
+            />
+            <label className="text-xs text-muted">Password</label>
+            <input
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              required
+              autoComplete="current-password"
+              minLength={6}
             />
             <button
               type="submit"
-              disabled={status === 'sending' || status === 'sent'}
+              disabled={status === 'signing-in'}
               className="px-3 py-2 rounded bg-accent hover:bg-blue-500 text-white text-sm disabled:opacity-60"
             >
-              {status === 'sending'
-                ? 'Sending…'
-                : status === 'sent'
-                  ? 'Link sent'
-                  : 'Send magic link'}
+              {status === 'signing-in' ? 'Signing in…' : 'Sign in'}
             </button>
             {message && (
-              <div
-                className={`text-xs ${
-                  status === 'error' ? 'text-rose-400' : 'text-emerald-400'
-                }`}
-              >
-                {message}
-              </div>
+              <div className="text-xs text-rose-400">{message}</div>
             )}
             <div className="text-[11px] text-muted leading-snug pt-2 border-t border-[#222837]">
-              We'll email you a one-tap sign-in link. Only emails on the FB Corp invite
-              list are allowed.
+              First time signing in? Use the initial password your admin gave you. Only
+              emails on the FB Corp invite list can sign in.
             </div>
           </form>
         )}
