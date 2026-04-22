@@ -171,6 +171,24 @@ export async function signInWithPassword(
   return { ok: true };
 }
 
+export async function signInWithGoogle(): Promise<{ ok: true } | { ok: false; error: string }> {
+  const { error } = await supabase.auth.signInWithOAuth({
+    provider: 'google',
+    options: {
+      redirectTo: `${window.location.origin}/`,
+      // Hint Google to show the account chooser even if the user is already
+      // signed into a Google account — handy for shared machines.
+      queryParams: { prompt: 'select_account' },
+    },
+  });
+  if (error) {
+    return { ok: false, error: error.message };
+  }
+  // signInWithOAuth triggers a full-page redirect, so anything after this
+  // line typically doesn't run.
+  return { ok: true };
+}
+
 // Kept for future opt-in; not wired to the UI right now.
 export async function sendMagicLink(email: string): Promise<{ ok: true } | { ok: false; error: string }> {
   const normalized = email.trim().toLowerCase();
