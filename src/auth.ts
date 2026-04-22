@@ -67,6 +67,58 @@ export function useAuth(): AuthState {
   return state;
 }
 
+export async function signInWithPassword(
+  email: string,
+  password: string
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const normalized = email.trim().toLowerCase();
+  if (!normalized) return { ok: false, error: 'Enter your email.' };
+  if (!password) return { ok: false, error: 'Enter your password.' };
+
+  // Try to sign in first; if the account doesn't exist yet, fall back to
+  // signup so first-time users can join with the shared initial password.
+  const signIn = await supabase.auth.signInWithPassword({
+    email: normalized,
+    password,
+  });
+  if (!signIn.error) return { ok: true };
+
+  const msg = (signIn.error.message || '').toLowerCase();
+  const isBadCreds = msg.includes('invalid login credentials') || msg.includes('invalid');
+  if (!isBadCreds) {
+    return { ok: false, error: signIn.error.message };
+  }
+
+  // Account may not exist yet — try signup. The handle_new_user trigger
+  // enforces the invite allowlist.
+  const signUp = await supabase.auth.signUp({
+    email: normalized,
+    password,
+  });
+  if (signUp.error) {
+    const m = (signUp.error.message || '').toLowerCase();
+    if (m.includes('invite')) {
+      return {
+        ok: false,
+        error: "This email isn't on the invite list. Ask an owner to add you.",
+      };
+    }
+    if (m.includes('already registered') || m.includes('already exists')) {
+      return { ok: false, error: 'Wrong password for this account.' };
+    }
+    return { ok: false, error: signUp.error.message };
+  }
+  if (!signUp.data.session) {
+    return {
+      ok: false,
+      error:
+        "Account created but email confirmation is enabled. Ask an admin to turn off 'Confirm email' in Supabase → Authentication → Sign In / Providers.",
+    };
+  }
+  return { ok: true };
+}
+
+// Kept for future opt-in; not wired to the UI right now.
 export async function sendMagicLink(email: string): Promise<{ ok: true } | { ok: false; error: string }> {
   const normalized = email.trim().toLowerCase();
   if (!normalized) return { ok: false, error: 'Enter your email.' };
