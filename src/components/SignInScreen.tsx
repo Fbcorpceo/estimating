@@ -42,7 +42,7 @@ export function SignInScreen({ initialError }: { initialError?: string | null })
     <div className="h-full w-full flex items-center justify-center bg-[#0d0f15]">
       <div className="w-[360px] bg-panel border border-[#2a3142] rounded-lg p-6">
         <div className="flex items-center gap-3 mb-4">
-          <img src="/fb-logo.svg?v=2" alt="FB" className="h-8 w-auto" />
+          <img src={`${import.meta.env.BASE_URL}fb-logo.svg?v=2`} alt="FB" className="h-8 w-auto" />
           <div className="text-lg font-semibold text-ink">Takeoff</div>
         </div>
         {!supabaseConfigured ? (
