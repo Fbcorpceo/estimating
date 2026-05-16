@@ -4,5 +4,8 @@
   "buildCommand": "npm run build",
   "outputDirectory": "dist",
   "installCommand": "npm install",
-  "cleanUrls": true
+  "cleanUrls": true,
+  "rewrites": [
+    { "source": "/estimating/:path*", "destination": "/:path*" }
+  ]
 }

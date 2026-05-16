@@ -175,7 +175,7 @@ export async function signInWithGoogle(): Promise<{ ok: true } | { ok: false; er
   const { error } = await supabase.auth.signInWithOAuth({
     provider: 'google',
     options: {
-      redirectTo: `${window.location.origin}/`,
+      redirectTo: `${window.location.origin}${import.meta.env.BASE_URL}`,
       // Hint Google to show the account chooser even if the user is already
       // signed into a Google account — handy for shared machines.
       queryParams: { prompt: 'select_account' },
@@ -196,7 +196,7 @@ export async function sendMagicLink(email: string): Promise<{ ok: true } | { ok:
   const { error } = await supabase.auth.signInWithOtp({
     email: normalized,
     options: {
-      emailRedirectTo: `${window.location.origin}/`,
+      emailRedirectTo: `${window.location.origin}${import.meta.env.BASE_URL}`,
       shouldCreateUser: true,
     },
   });
